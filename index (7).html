@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Human Verification</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--tg-theme-bg-color, #ffffff);
+      color: var(--tg-theme-text-color, #222222);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 20px 16px;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 340px;
+      background: var(--tg-theme-secondary-bg-color, #f5f5f5);
+      border-radius: 20px;
+      padding: 28px 20px 24px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+
+    .shield {
+      font-size: 44px;
+      display: block;
+      margin-bottom: 10px;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.08); }
+    }
+
+    .header h1 {
+      font-size: 19px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    .header p {
+      font-size: 13px;
+      opacity: 0.6;
+    }
+
+    /* ── Puzzle Area ── */
+    .puzzle-wrap {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 7/4;
+      border-radius: 12px;
+      overflow: hidden;
+      background: #ddd;
+      margin-bottom: 16px;
+    }
+
+    #bgCanvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    #pieceCanvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: none;
+    }
+
+    .refresh-btn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 32px;
+      height: 32px;
+      border: none;
+      background: rgba(255,255,255,0.85);
+      border-radius: 50%;
+      font-size: 18px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(4px);
+      transition: transform 0.35s ease;
+      z-index: 10;
+    }
+
+    .refresh-btn.spinning { transform: rotate(360deg); }
+
+    /* ── Slider ── */
+    .slider-wrap { width: 100%; }
+
+    .track {
+      position: relative;
+      width: 100%;
+      height: 48px;
+      background: var(--tg-theme-bg-color, #e8e8e8);
+      border-radius: 24px;
+      border: 2px solid rgba(0,0,0,0.08);
+      overflow: hidden;
+      touch-action: none;
+    }
+
+    .fill {
+      position: absolute;
+      top: 0; left: 0;
+      height: 100%;
+      width: 0;
+      background: linear-gradient(90deg, #54a0ff, #5f27cd);
+      border-radius: 24px;
+      transition: background 0.2s;
+    }
+
+    .thumb {
+      position: absolute;
+      top: 3px; left: 3px;
+      width: 42px; height: 42px;
+      background: #fff;
+      border-radius: 50%;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2), 0 0 0 3px #5f27cd;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: grab;
+      touch-action: none;
+      z-index: 2;
+      transition: transform 0.1s;
+    }
+
+    .thumb:active { cursor: grabbing; transform: scale(1.08); }
+
+    .thumb-icon { font-size: 18px; }
+
+    .hint {
+      text-align: center;
+      font-size: 12px;
+      opacity: 0.5;
+      margin-top: 8px;
+    }
+
+    /* ── Status ── */
+    .status {
+      min-height: 28px;
+      margin-top: 12px;
+      text-align: center;
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .status.error { color: #e74c3c; }
+    .status.success { color: #27ae60; }
+
+    /* ── Attempts ── */
+    .attempts {
+      display: flex;
+      justify-content: center;
+      gap: 6px;
+      margin-top: 12px;
+    }
+
+    .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #ddd;
+      transition: background 0.2s;
+    }
+
+    .dot.used { background: #e74c3c; }
+
+    /* ── Success Overlay ── */
+    .success-overlay {
+      position: fixed;
+      inset: 0;
+      background: var(--tg-theme-bg-color, #fff);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 999;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s;
+    }
+
+    .success-overlay.show {
+      opacity: 1;
+      pointer-events: all;
+    }
+
+    .checkmark {
+      font-size: 72px;
+      animation: pop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+
+    @keyframes pop {
+      0% { transform: scale(0.3); opacity: 0; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+
+    .success-overlay h2 {
+      font-size: 22px;
+      font-weight: 700;
+      margin-top: 16px;
+    }
+
+    .success-overlay p {
+      font-size: 14px;
+      opacity: 0.6;
+      margin-top: 6px;
+    }
+
+    /* ── Locked ── */
+    .locked-msg {
+      display: none;
+      text-align: center;
+      padding: 16px;
+      background: rgba(231,76,60,0.1);
+      border-radius: 12px;
+      margin-top: 12px;
+      font-size: 13px;
+      color: #e74c3c;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="card">
+    <div class="header">
+      <span class="shield">🛡️</span>
+      <h1>Human Verification</h1>
+      <p>Slide the piece to complete</p>
+    </div>
+
+    <div class="puzzle-wrap" id="puzzleWrap">
+      <canvas id="bgCanvas"></canvas>
+      <canvas id="pieceCanvas"></canvas>
+      <button class="refresh-btn" id="refreshBtn">↻</button>
+    </div>
+
+    <div class="slider-wrap">
+      <div class="track" id="track">
+        <div class="fill" id="fill"></div>
+        <div class="thumb" id="thumb">
+          <span class="thumb-icon">⟫</span>
+        </div>
+      </div>
+      <p class="hint">Drag to match the puzzle piece</p>
+    </div>
+
+    <div class="status" id="status"></div>
+
+    <div class="attempts" id="attempts">
+      <div class="dot" id="d0"></div>
+      <div class="dot" id="d1"></div>
+      <div class="dot" id="d2"></div>
+      <div class="dot" id="d3"></div>
+      <div class="dot" id="d4"></div>
+    </div>
+
+    <div class="locked-msg" id="lockedMsg">
+      Too many attempts. Please close and try again.
+    </div>
+  </div>
+
+  <div class="success-overlay" id="successOverlay">
+    <span class="checkmark">✅</span>
+    <h2>Verified!</h2>
+    <p>Returning to bot...</p>
+  </div>
+
+  <script>
+    // ── Telegram WebApp init ───────────────────────────────────
+    const tg = window.Telegram?.WebApp;
+    if (tg) {
+      tg.expand();
+      tg.ready();
+      tg.enableClosingConfirmation();
+    }
+
+    // ── Elements ──────────────────────────────────────────────
+    const bgCanvas   = document.getElementById('bgCanvas');
+    const pieceCanvas = document.getElementById('pieceCanvas');
+    const puzzleWrap = document.getElementById('puzzleWrap');
+    const track      = document.getElementById('track');
+    const fill       = document.getElementById('fill');
+    const thumb      = document.getElementById('thumb');
+    const statusEl   = document.getElementById('status');
+    const refreshBtn = document.getElementById('refreshBtn');
+    const overlay    = document.getElementById('successOverlay');
+    const lockedMsg  = document.getElementById('lockedMsg');
+
+    const ctx  = bgCanvas.getContext('2d');
+    const pCtx = pieceCanvas.getContext('2d');
+
+    // ── Config ────────────────────────────────────────────────
+    const PIECE_SIZE = 44;
+    const TOLERANCE  = 6;
+    const MAX_TRIES  = 5;
+
+    let W, H;           // canvas dimensions (set on resize)
+    let targetX, targetY;
+    let curX     = 0;
+    let dragging = false;
+    let startX   = 0;
+    let tries    = 0;
+    let solved   = false;
+    let locked   = false;
+    let maxSlide = 0;
+
+    // ── Responsive sizing ─────────────────────────────────────
+    function setSize() {
+      const rect = puzzleWrap.getBoundingClientRect();
+      W = Math.round(rect.width);
+      H = Math.round(rect.height);
+
+      bgCanvas.width    = W;
+      bgCanvas.height   = H;
+      bgCanvas.style.width  = W + 'px';
+      bgCanvas.style.height = H + 'px';
+
+      pieceCanvas.width  = W;
+      pieceCanvas.height = H;
+      pieceCanvas.style.width  = W + 'px';
+      pieceCanvas.style.height = H + 'px';
+
+      const trackW = track.getBoundingClientRect().width;
+      maxSlide = trackW - 42 - 6; // track width - thumb width - padding
+    }
+
+    // ── Draw background ───────────────────────────────────────
+    function drawBg() {
+      const hue1 = Math.random() * 360;
+      const hue2 = (hue1 + 50 + Math.random() * 60) % 360;
+      const gr = ctx.createLinearGradient(0, 0, W, H);
+      gr.addColorStop(0, `hsl(${hue1},55%,65%)`);
+      gr.addColorStop(1, `hsl(${hue2},55%,60%)`);
+      ctx.fillStyle = gr;
+      ctx.fillRect(0, 0, W, H);
+
+      // Decorative circles
+      for (let i = 0; i < 10; i++) {
+        ctx.beginPath();
+        ctx.arc(
+          Math.random() * W,
+          Math.random() * H,
+          8 + Math.random() * 28,
+          0, Math.PI * 2
+        );
+        ctx.fillStyle = `hsla(${Math.random()*360},50%,60%,0.25)`;
+        ctx.fill();
+      }
+    }
+
+    // ── Puzzle piece path ─────────────────────────────────────
+    function piecePath(c, x, y, s) {
+      const k = s * 0.26;
+      c.beginPath();
+      c.moveTo(x, y);
+      c.lineTo(x + s * 0.35, y);
+      c.arc(x + s * 0.5, y, k, Math.PI, 0, false);
+      c.lineTo(x + s, y);
+      c.lineTo(x + s, y + s * 0.35);
+      c.arc(x + s, y + s * 0.5, k, -Math.PI/2, Math.PI/2, false);
+      c.lineTo(x + s, y + s);
+      c.lineTo(x, y + s);
+      c.closePath();
+    }
+
+    // ── Draw hole on background ───────────────────────────────
+    function drawHole() {
+      piecePath(ctx, targetX, targetY, PIECE_SIZE);
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+
+    // ── Draw floating piece on piece canvas ───────────────────
+    function drawPiece(x) {
+      pCtx.clearRect(0, 0, W, H);
+
+      pCtx.save();
+      piecePath(pCtx, x, targetY, PIECE_SIZE);
+      pCtx.clip();
+      pCtx.drawImage(bgCanvas, targetX, targetY, PIECE_SIZE, PIECE_SIZE, x, targetY, PIECE_SIZE, PIECE_SIZE);
+      pCtx.restore();
+
+      pCtx.save();
+      piecePath(pCtx, x, targetY, PIECE_SIZE);
+      pCtx.strokeStyle = 'rgba(255,255,255,0.85)';
+      pCtx.lineWidth = 2;
+      pCtx.stroke();
+      pCtx.restore();
+    }
+
+    // ── Generate new captcha ──────────────────────────────────
+    function generate() {
+      if (locked) return;
+      curX   = 0;
+      solved = false;
+
+      const margin = PIECE_SIZE + 10;
+      targetX = margin + Math.floor(Math.random() * (W - PIECE_SIZE * 2 - margin));
+      targetY = Math.floor(Math.random() * (H - PIECE_SIZE - 10)) + 5;
+
+      // Reset slider
+      thumb.style.transition = 'none';
+      fill.style.transition  = 'none';
+      thumb.style.left = '3px';
+      fill.style.width = '0px';
+      fill.style.background = 'linear-gradient(90deg, #54a0ff, #5f27cd)';
+
+      statusEl.textContent = '';
+      statusEl.className   = 'status';
+
+      drawBg();
+      drawHole();
+      drawPiece(0);
+    }
+
+    // ── Slider drag logic ─────────────────────────────────────
+    function getX(e) {
+      return e.touches ? e.touches[0].clientX : e.clientX;
+    }
+
+    function onStart(e) {
+      if (solved || locked) return;
+      e.preventDefault();
+      dragging = true;
+      startX   = getX(e) - curX;
+    }
+
+    function onMove(e) {
+      if (!dragging) return;
+      e.preventDefault();
+      curX = Math.max(0, Math.min(getX(e) - startX, maxSlide));
+      thumb.style.left = (curX + 3) + 'px';
+      fill.style.width = (curX + 22) + 'px';
+
+      // Move piece proportionally
+      const pieceX = (curX / maxSlide) * (W - PIECE_SIZE);
+      drawPiece(pieceX);
+    }
+
+    function onEnd() {
+      if (!dragging) return;
+      dragging = false;
+      const pieceX = (curX / maxSlide) * (W - PIECE_SIZE);
+
+      if (Math.abs(pieceX - targetX) <= TOLERANCE) {
+        onSuccess();
+      } else {
+        onFail();
+      }
+    }
+
+    // ── Success ───────────────────────────────────────────────
+    function onSuccess() {
+      solved = true;
+      fill.style.background = 'linear-gradient(90deg, #27ae60, #2ecc71)';
+      thumb.querySelector('.thumb-icon').textContent = '✓';
+      statusEl.textContent = '✓ Verified!';
+      statusEl.className   = 'status success';
+
+      setTimeout(() => {
+        overlay.classList.add('show');
+      }, 400);
+
+      setTimeout(() => {
+        if (tg) {
+          tg.sendData('captcha_success');
+          setTimeout(() => tg.close(), 800);
+        }
+      }, 1200);
+    }
+
+    // ── Fail ─────────────────────────────────────────────────
+    function onFail() {
+      tries++;
+      document.getElementById(`d${tries - 1}`)?.classList.add('used');
+
+      if (tries >= MAX_TRIES) {
+        locked = true;
+        statusEl.textContent = '❌ Too many attempts.';
+        statusEl.className   = 'status error';
+        lockedMsg.style.display = 'block';
+        thumb.style.opacity = '0.4';
+        return;
+      }
+
+      const left = MAX_TRIES - tries;
+      statusEl.textContent = `❌ Wrong! ${left} attempt${left > 1 ? 's' : ''} left`;
+      statusEl.className   = 'status error';
+
+      // Shake card
+      const card = document.querySelector('.card');
+      card.style.animation = 'none';
+      card.style.transform = 'translateX(-6px)';
+      setTimeout(() => {
+        card.style.transition = 'transform 0.4s ease';
+        card.style.transform  = 'translateX(0)';
+        setTimeout(() => { card.style.transition = ''; }, 400);
+      }, 50);
+
+      // Reset slider with animation
+      thumb.style.transition = 'left 0.35s ease';
+      fill.style.transition  = 'width 0.35s ease';
+      thumb.style.left = '3px';
+      fill.style.width = '0px';
+      curX = 0;
+
+      setTimeout(() => generate(), 600);
+    }
+
+    // ── Event listeners ───────────────────────────────────────
+    thumb.addEventListener('mousedown',  onStart);
+    thumb.addEventListener('touchstart', onStart, { passive: false });
+    document.addEventListener('mousemove',  onMove);
+    document.addEventListener('touchmove',  onMove, { passive: false });
+    document.addEventListener('mouseup',  onEnd);
+    document.addEventListener('touchend', onEnd);
+
+    refreshBtn.addEventListener('click', () => {
+      refreshBtn.classList.add('spinning');
+      setTimeout(() => {
+        refreshBtn.classList.remove('spinning');
+        tries = 0;
+        locked = false;
+        lockedMsg.style.display = 'none';
+        thumb.style.opacity = '1';
+        document.querySelectorAll('.dot').forEach(d => d.classList.remove('used'));
+        generate();
+      }, 350);
+    });
+
+    // ── Init ──────────────────────────────────────────────────
+    // Wait for layout before measuring
+    window.addEventListener('resize', () => {
+      setSize();
+      generate();
+    });
+
+    // Use requestAnimationFrame to ensure layout is done
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setSize();
+        generate();
+      });
+    });
+  </script>
+</body>
+</html>
