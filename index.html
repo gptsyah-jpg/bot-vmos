@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Human Verification</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--tg-theme-bg-color, #ffffff);
+      color: var(--tg-theme-text-color, #222222);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 360px;
+      background: var(--tg-theme-secondary-bg-color, #f5f5f5);
+      border-radius: 20px;
+      padding: 32px 20px 28px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+      text-align: center;
+    }
+
+    .shield {
+      font-size: 52px;
+      display: block;
+      margin-bottom: 12px;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.07); }
+    }
+
+    h1 {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+
+    .subtitle {
+      font-size: 13px;
+      opacity: 0.55;
+      margin-bottom: 28px;
+    }
+
+    /* Aliyun captcha akan render dalam div ni */
+    #captcha-element {
+      display: flex;
+      justify-content: center;
+      margin-bottom: 20px;
+      min-height: 50px;
+    }
+
+    .btn {
+      width: 100%;
+      padding: 14px;
+      background: linear-gradient(135deg, #54a0ff, #5f27cd);
+      color: #fff;
+      border: none;
+      border-radius: 14px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.1s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .btn:active { transform: scale(0.97); opacity: 0.9; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .status {
+      margin-top: 16px;
+      font-size: 13px;
+      min-height: 20px;
+      font-weight: 500;
+    }
+
+    .status.error { color: #e74c3c; }
+    .status.success { color: #27ae60; }
+    .status.loading { color: #3498db; }
+
+    /* Loading spinner */
+    .spinner {
+      display: inline-block;
+      width: 18px;
+      height: 18px;
+      border: 3px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Success overlay */
+    .success-overlay {
+      position: fixed;
+      inset: 0;
+      background: var(--tg-theme-bg-color, #fff);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 999;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.35s;
+    }
+
+    .success-overlay.show {
+      opacity: 1;
+      pointer-events: all;
+    }
+
+    .big-check {
+      font-size: 80px;
+      animation: pop 0.45s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+
+    @keyframes pop {
+      0% { transform: scale(0.2); opacity: 0; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+
+    .success-overlay h2 {
+      font-size: 24px;
+      font-weight: 700;
+      margin-top: 18px;
+    }
+
+    .success-overlay p {
+      font-size: 14px;
+      opacity: 0.55;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="card" id="mainCard">
+    <span class="shield">🛡️</span>
+    <h1>Human Verification</h1>
+    <p class="subtitle">Complete the verification to continue</p>
+
+    <!-- Aliyun captcha render di sini -->
+    <div id="captcha-element"></div>
+
+    <button class="btn" id="verifyBtn" onclick="startCaptcha()">
+      🔐 Verify I'm Human
+    </button>
+
+    <div class="status" id="status"></div>
+  </div>
+
+  <div class="success-overlay" id="successOverlay">
+    <span class="big-check">✅</span>
+    <h2>Verified!</h2>
+    <p>Returning to bot...</p>
+  </div>
+
+  <script>
+    // ── Telegram WebApp ───────────────────────────────────────
+    const tg = window.Telegram?.WebApp;
+    if (tg) {
+      tg.expand();
+      tg.ready();
+    }
+
+    const btn       = document.getElementById('verifyBtn');
+    const statusEl  = document.getElementById('status');
+    const overlay   = document.getElementById('successOverlay');
+
+    let captchaInstance = null;
+    let captchaLoaded   = false;
+    let verifyToken     = null;  // captchaVerifyParam dari Aliyun
+
+    // ── Set status text ───────────────────────────────────────
+    function setStatus(msg, type = '') {
+      statusEl.textContent = msg;
+      statusEl.className   = 'status ' + type;
+    }
+
+    // ── Load Aliyun Captcha JS ────────────────────────────────
+    function loadAliyunScript() {
+      return new Promise((resolve, reject) => {
+        if (window.initAliyunCaptcha) { resolve(); return; }
+        const s = document.createElement('script');
+        s.src   = 'https://o.alicdn.com/captcha-frontend/aliyunCaptcha/AliyunCaptcha.js';
+        s.async = true;
+        s.onload  = () => resolve();
+        s.onerror = () => reject(new Error('Failed to load Aliyun captcha'));
+        document.head.appendChild(s);
+      });
+    }
+
+    // ── Init Aliyun Captcha (same config as VMOS Cloud) ───────
+    async function initCaptcha() {
+      if (captchaLoaded) return;
+
+      try {
+        await loadAliyunScript();
+      } catch (e) {
+        setStatus('❌ Failed to load verification. Check internet.', 'error');
+        return;
+      }
+
+      // Config sama persis dari VMOS source code:
+      // SceneId: "5jvar3wp", prefix: "69r0rc"
+      initAliyunCaptcha({
+        SceneId: '5jvar3wp',
+        prefix:  '69r0rc',
+        mode:    'popup',
+        element: '#captcha-element',
+        button:  '#verifyBtn',
+
+        // Dipanggil bila user selesaikan puzzle — simpan token
+        captchaVerifyCallback: async (captchaVerifyParam) => {
+          verifyToken = captchaVerifyParam;
+          console.log('[Captcha] Token received:', captchaVerifyParam ? captchaVerifyParam.substring(0, 40) + '...' : 'NULL');
+          return { captchaResult: true };
+        },
+
+        // Dipanggil lepas captchaVerifyCallback return true
+        onBizResultCallback: (bizResult) => {
+          console.log('[Captcha] BizResult:', bizResult, 'Token:', verifyToken ? 'OK' : 'MISSING');
+          if (verifyToken) {
+            onCaptchaSuccess();
+          } else {
+            setStatus('❌ Token missing. Cuba lagi.', 'error');
+            btn.disabled = false;
+            btn.innerHTML = '🔐 Verify I\'m Human';
+          }
+        },
+
+        getInstance: (instance) => {
+          captchaInstance = instance;
+        },
+
+        slideStyle: {
+          width:  300,
+          height: 40,
+        },
+
+        language: 'en',
+        region: 'sgp',  // Singapore region (closest to SEA)
+      });
+
+      captchaLoaded = true;
+    }
+
+    // ── Button click ──────────────────────────────────────────
+    async function startCaptcha() {
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Loading...';
+      setStatus('');
+
+      await initCaptcha();
+
+      // Show captcha popup (Aliyun auto-trigger via button binding,
+      // tapi kita manual show juga kalau dah init)
+      if (captchaInstance) {
+        try { captchaInstance.show(); } catch(e) {}
+      }
+
+      btn.disabled = false;
+      btn.innerHTML = '🔐 Verify I\'m Human';
+    }
+
+    // ── Captcha selesai berjaya ───────────────────────────────
+    function onCaptchaSuccess() {
+      setStatus('✓ Verified!', 'success');
+      btn.disabled = true;
+      btn.innerHTML = '✓ Verified';
+
+      // Hantar token ke bot
+      setTimeout(() => {
+        overlay.classList.add('show');
+
+        setTimeout(() => {
+          if (tg && verifyToken) {
+            // Hantar captchaVerifyParam yang sebenar ke bot
+            tg.sendData(verifyToken);
+            setTimeout(() => tg.close(), 800);
+          } else if (tg) {
+            // Fallback kalau token kosong
+            tg.sendData('captcha_success');
+            setTimeout(() => tg.close(), 800);
+          }
+        }, 600);
+      }, 400);
+    }
+
+    // ── Auto-init pada load ───────────────────────────────────
+    // Pre-load script tapi jangan show captcha lagi
+    window.addEventListener('load', () => {
+      loadAliyunScript().then(() => {
+        captchaLoaded = false; // Reset supaya initCaptcha() panggil initAliyunCaptcha
+      }).catch(() => {});
+    });
+  </script>
+</body>
+</html>
